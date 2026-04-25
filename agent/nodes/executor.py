@@ -8,7 +8,8 @@ from eth_account import Account
 from agent.schemas import AgentState, ExecutionReceipt
 from agent.tools.bundler import send_user_op, estimate_user_op_gas
 from agent.tools.ipfs import pin_json
-from agent.tools.oneinch import get_swap_calldata
+from agent.tools.uniswap import get_swap_calldata
+from agent.tools.userop import sign_user_op
 
 PRIVATE_KEY = os.getenv("PRIVATE_KEY", "")
 SENTINEL_ACCOUNT = os.getenv("SENTINEL_ACCOUNT_ADDRESS", "")
@@ -79,12 +80,10 @@ async def executor_node(state: AgentState) -> AgentState:
     rpc_url = os.getenv("BASE_SEPOLIA_RPC", "")
     w3 = Web3(Web3.HTTPProvider(rpc_url)) if rpc_url else None
 
-    # Get 1inch swap calldata
-    swap_data = await get_swap_calldata(
+    # Build Uniswap V3 swap calldata (1inch doesn't support Base Sepolia)
+    dex_address, swap_calldata = get_swap_calldata(
         action.token_in, action.token_out, action.amount_in, SENTINEL_ACCOUNT
     )
-    dex_address = swap_data.get("tx", {}).get("to", "")
-    swap_calldata = swap_data.get("tx", {}).get("data", "0x")
 
     # Build executeSwap calldata
     if w3:
@@ -99,7 +98,7 @@ async def executor_node(state: AgentState) -> AgentState:
                 Web3.to_checksum_address(action.token_in),
                 Web3.to_checksum_address(action.token_out),
                 action.amount_in,
-                bytes.fromhex(swap_calldata.removeprefix("0x")),
+                bytes.fromhex(swap_calldata.removeprefix("0x") if isinstance(swap_calldata, str) else swap_calldata.hex()),
                 cid,
             ],
         )
@@ -112,30 +111,40 @@ async def executor_node(state: AgentState) -> AgentState:
     if w3 and account:
         ep_abi = [{"inputs": [{"name": "sender", "type": "address"}, {"name": "key", "type": "uint192"}], "name": "getNonce", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"}]
         ep = w3.eth.contract(address=Web3.to_checksum_address(ENTRYPOINT), abi=ep_abi)
-        nonce = ep.functions.getNonce(account.address, 0).call()
+        # Nonce is for the SentinelAccount (sender), not the EOA
+        nonce = ep.functions.getNonce(Web3.to_checksum_address(SENTINEL_ACCOUNT), 0).call()
 
+    # ERC-4337 v0.7 UserOperation format (EntryPoint 0x00000000717...)
+    call_data_hex = call_data if isinstance(call_data, str) else ("0x" + call_data.hex())
     user_op = {
         "sender": SENTINEL_ACCOUNT,
         "nonce": hex(nonce),
-        "initCode": "0x",
-        "callData": call_data if isinstance(call_data, str) else call_data.hex(),
-        "callGasLimit": hex(200_000),
-        "verificationGasLimit": hex(150_000),
-        "preVerificationGas": hex(50_000),
-        "maxFeePerGas": hex(int(1.5e9)),
+        "factory": None,
+        "factoryData": None,
+        "callData": call_data_hex,
+        "callGasLimit": hex(300_000),
+        "verificationGasLimit": hex(200_000),
+        "preVerificationGas": hex(60_000),
+        "maxFeePerGas": hex(int(2e9)),
         "maxPriorityFeePerGas": hex(int(1e9)),
-        "paymasterAndData": SENTINEL_PAYMASTER + "0" * 130 if SENTINEL_PAYMASTER else "0x",
-        "signature": "0x",
+        "paymaster": None,
+        "paymasterVerificationGasLimit": None,
+        "paymasterPostOpGasLimit": None,
+        "paymasterData": None,
+        "signature": "0x" + "00" * 65,  # placeholder, replaced below
     }
 
-    # Sign UserOperation
-    if account and w3:
-        from eth_account.messages import encode_defunct
-        op_hash = Web3.keccak(
-            Web3.to_bytes(hexstr=user_op["callData"][:66])
-        )
-        signed = account.sign_message(encode_defunct(op_hash))
-        user_op["signature"] = signed.signature.hex()
+    # Estimate gas from bundler with dummy signature, then sign with real values
+    try:
+        gas_est = await estimate_user_op_gas(user_op)
+        user_op["callGasLimit"] = gas_est.get("callGasLimit", user_op["callGasLimit"])
+        user_op["verificationGasLimit"] = gas_est.get("verificationGasLimit", user_op["verificationGasLimit"])
+        user_op["preVerificationGas"] = gas_est.get("preVerificationGas", user_op["preVerificationGas"])
+    except Exception:
+        pass  # use defaults if estimation fails
+
+    if PRIVATE_KEY:
+        user_op["signature"] = sign_user_op(user_op, PRIVATE_KEY)
 
     user_op_hash = await send_user_op(user_op)
 

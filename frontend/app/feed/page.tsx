@@ -1,8 +1,10 @@
 'use client'
 
 import { useState } from 'react'
+import { useQuery } from '@apollo/client'
 import WhyModal, { type Action } from '@/components/WhyModal'
 import { SENTINEL_DATA, formatTimeAgo, fmtUsd } from '@/lib/data'
+import { ACTIONS_QUERY, tokenSymbol, formatWei } from '@/lib/queries'
 
 function PnlPill({ n }: { n: number }) {
   if (n === 0) return <span className="pill muted">— $0.00</span>
@@ -15,11 +17,51 @@ function PnlPill({ n }: { n: number }) {
 
 type Filter = 'all' | 'wins' | 'losses' | 'blocked'
 
+// Shorten subgraph ID (txHash-logIndex) to a readable label
+function shortId(id: string): string {
+  const parts = id.split('-')
+  const hash = parts[0]
+  return `${hash.slice(0, 8)}…${hash.slice(-4)}`
+}
+
+// Map subgraph Action to WhyModal Action shape
+function toAction(raw: Record<string, string>): Action {
+  return {
+    id: raw.id,
+    ts: Number(raw.timestamp) * 1000,
+    tokenIn: tokenSymbol(raw.tokenIn),
+    tokenOut: tokenSymbol(raw.tokenOut),
+    amountIn: formatWei(raw.amountIn, raw.tokenIn),
+    amountOut: formatWei(raw.amountOut, raw.tokenOut),
+    pnl: 0,
+    outcome: 'filled',
+    cid: raw.reasoningCID,
+    txHash: null,
+    sentiment: 0,
+    policy: [],
+    rationale: '',
+    docs: [],
+    zk: false,
+    proofCid: null,
+  }
+}
+
 export default function FeedPage() {
   const [filter, setFilter] = useState<Filter>('all')
   const [whyAction, setWhyAction] = useState<Action | null>(null)
 
-  const all = SENTINEL_DATA.actions
+  const { data, loading, error } = useQuery(ACTIONS_QUERY, {
+    variables: { first: 100, skip: 0 },
+    pollInterval: 15000,
+  })
+
+  // Use real data if available, fall back to mock while subgraph syncs
+  const all: Action[] = (data?.actions?.length > 0)
+    ? data.actions.map(toAction)
+    : SENTINEL_DATA.actions
+
+  const isLive = data?.actions?.length > 0
+
   const actions = all.filter(a => {
     if (filter === 'all') return true
     if (filter === 'blocked') return a.outcome === 'blocked'
@@ -62,7 +104,7 @@ export default function FeedPage() {
           <FilterBtn id="blocked" label="BLOCKED" />
           <div style={{ flex: 1 }} />
           <div className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            subgraph · ACTIONS_QUERY · synced 14s ago
+            {loading ? 'syncing subgraph…' : error ? 'subgraph error — showing demo data' : isLive ? 'live · subgraph · 15s poll' : 'demo data · subgraph indexing'}
           </div>
         </div>
 
@@ -78,8 +120,8 @@ export default function FeedPage() {
             {actions.map(a => (
               <div className="action-row" key={a.id}>
                 <div>
-                  <div className="mono" style={{ fontSize: 12 }}>{formatTimeAgo(a.ts)}</div>
-                  <div className="mono" style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{a.id}</div>
+                  <div className="mono" style={{ fontSize: 12 }} suppressHydrationWarning>{formatTimeAgo(a.ts)}</div>
+                  <div className="mono" style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{shortId(a.id)}</div>
                 </div>
 
                 <div className="tok-flow mono">

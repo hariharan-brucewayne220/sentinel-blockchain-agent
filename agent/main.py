@@ -1,13 +1,15 @@
 """Entry point — single-cycle or 15-minute loop mode."""
+# Load .env BEFORE any agent module imports so module-level os.getenv() calls see the values
+import pathlib
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=pathlib.Path(__file__).parent / ".env")
+
 import argparse
 import asyncio
 import signal
 import sys
-from dotenv import load_dotenv
 from agent.graph import sentinel_graph
 from agent.schemas import AgentState
-
-load_dotenv()
 
 _shutdown = False
 
@@ -21,6 +23,8 @@ def _handle_signal(sig, frame):
 async def run_cycle() -> AgentState:
     initial = AgentState()
     result = await sentinel_graph.ainvoke(initial)
+    if isinstance(result, dict):
+        return AgentState(**result)
     return result
 
 
@@ -64,8 +68,16 @@ if __name__ == "__main__":
         asyncio.run(main_loop(args.interval))
     else:
         result = asyncio.run(run_cycle())
+        if result.market_context:
+            print(f"[researcher] holdings: {result.market_context.holdings}")
+            print(f"[researcher] prices: {result.market_context.prices}")
+            print(f"[researcher] portfolio_value_usd: ${result.market_context.portfolio_value_usd:.2f}")
+            print(f"[researcher] sentiment: {result.market_context.sentiment_score:.2f}")
+        if result.proposed_action:
+            print(f"[strategist] no_action={result.proposed_action.no_action} rationale={result.proposed_action.rationale}")
         if result.execution_receipt:
             print(f"Done. UserOp: {result.execution_receipt.user_op_hash}")
+            print(f"Done. IPFS CID: {result.execution_receipt.ipfs_cid}")
         elif result.proposed_action and result.proposed_action.no_action:
             print(f"Done. No action: {result.proposed_action.rationale}")
         else:

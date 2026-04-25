@@ -1,11 +1,9 @@
-'use client'
-
-import { getDefaultConfig } from '@rainbow-me/rainbowkit'
+import { createConfig, http } from 'wagmi'
 import { baseSepolia } from 'wagmi/chains'
+import { injected } from 'wagmi/connectors'
 
-export const wagmiConfig = getDefaultConfig({
-  appName: 'Sentinel',
-  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_ID || 'sentinel-dev',
+export const wagmiConfig = createConfig({
   chains: [baseSepolia],
-  ssr: true,
+  connectors: [injected()],
+  transports: { [baseSepolia.id]: http() },
 })

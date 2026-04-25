@@ -1,21 +1,56 @@
 'use client'
 
 import { useState } from 'react'
-import { SENTINEL_DATA } from '@/lib/data'
+import { useReadContracts, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
+import { formatUnits } from 'viem'
 
-type TxState = 'idle' | 'pending' | 'success'
+const POLICY_GUARD = (process.env.NEXT_PUBLIC_POLICY_GUARD ?? '0xC0375319E7623041875ee485D84A652Da2A36B73') as `0x${string}`
+
+const abi = [
+  { name: 'maxTradeSizeUsd',   type: 'function', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { name: 'dailyDrawdownLimit', type: 'function', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { name: 'cooldownPeriod',    type: 'function', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { name: 'cumulativeDrawdown', type: 'function', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { name: 'updatePolicy', type: 'function', stateMutability: 'nonpayable',
+    inputs: [{ name: '_maxTradeSizeUsd', type: 'uint256' }, { name: '_dailyDrawdownLimit', type: 'uint256' }, { name: '_cooldownPeriod', type: 'uint256' }],
+    outputs: [] },
+] as const
+
+function fmt18(val: bigint | undefined): string {
+  if (val === undefined) return '—'
+  return Number(formatUnits(val, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
 
 export default function ConfigurePage() {
-  const [vals, setVals] = useState(SENTINEL_DATA.policy)
-  const [txState, setTxState] = useState<TxState>('idle')
+  const { data, isLoading, refetch } = useReadContracts({
+    contracts: [
+      { address: POLICY_GUARD, abi, functionName: 'maxTradeSizeUsd' },
+      { address: POLICY_GUARD, abi, functionName: 'dailyDrawdownLimit' },
+      { address: POLICY_GUARD, abi, functionName: 'cooldownPeriod' },
+      { address: POLICY_GUARD, abi, functionName: 'cumulativeDrawdown' },
+    ],
+  })
 
+  const maxSize      = data?.[0]?.result as bigint | undefined
+  const drawdownLim  = data?.[1]?.result as bigint | undefined
+  const cooldown     = data?.[2]?.result as bigint | undefined
+  const cumDrawdown  = data?.[3]?.result as bigint | undefined
+
+  const [vals, setVals] = useState({ maxTradeSizeUsd: '10000', dailyDrawdownUsd: '1000', cooldownSec: '300', whitelist: '' })
   const bump = (k: keyof typeof vals) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setVals(v => ({ ...v, [k]: e.target.value }))
 
+  const { writeContract, data: txHash, isPending } = useWriteContract()
+  const { isSuccess } = useWaitForTransactionReceipt({ hash: txHash })
+
   const submit = () => {
-    setTxState('pending')
-    setTimeout(() => setTxState('success'), 2200)
-    setTimeout(() => setTxState('idle'), 5200)
+    const toWei = (n: string) => BigInt(Math.floor(Number(n) * 1e18))
+    writeContract({
+      address: POLICY_GUARD,
+      abi,
+      functionName: 'updatePolicy',
+      args: [toWei(vals.maxTradeSizeUsd), toWei(vals.dailyDrawdownUsd), BigInt(vals.cooldownSec)],
+    })
   }
 
   return (
@@ -30,43 +65,54 @@ export default function ConfigurePage() {
       </div>
 
       <div style={{ maxWidth: 720 }}>
+        {/* Live on-chain values */}
+        <div className="card" style={{ marginBottom: 24 }}>
+          <div className="label" style={{ marginBottom: 14 }}>
+            Live On-Chain State {isLoading && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>· reading…</span>}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            {[
+              { label: 'Max Trade Size', value: `$${fmt18(maxSize)}` },
+              { label: 'Daily Drawdown Limit', value: `$${fmt18(drawdownLim)}` },
+              { label: 'Cooldown Period', value: cooldown !== undefined ? `${cooldown.toString()}s` : '—' },
+              { label: 'Cumulative Drawdown', value: `$${fmt18(cumDrawdown)}` },
+            ].map(({ label, value }) => (
+              <div key={label}>
+                <div className="mono" style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>{label}</div>
+                <div className="mono amber" style={{ fontSize: 18 }}>{value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Update form */}
         <div className="card">
+          <div className="label" style={{ marginBottom: 16 }}>Update Policy</div>
+
           <div className="field">
             <label className="lbl">Max Trade Size (USD)</label>
             <input type="number" className="input" value={vals.maxTradeSizeUsd} onChange={bump('maxTradeSizeUsd')} />
-            <div className="desc">
-              Hard ceiling per swap, denominated via Chainlink price feed. Current: ${Number(vals.maxTradeSizeUsd).toLocaleString()}.
-            </div>
+            <div className="desc">Hard ceiling per swap via Chainlink price feed.</div>
           </div>
 
           <div className="field">
             <label className="lbl">Daily Drawdown Limit (USD)</label>
             <input type="number" className="input" value={vals.dailyDrawdownUsd} onChange={bump('dailyDrawdownUsd')} />
-            <div className="desc">
-              If cumulative 24h P&amp;L drops below this threshold, the guard auto-pauses executeSwap.
-            </div>
+            <div className="desc">Auto-pauses executeSwap if cumulative 24h loss exceeds this.</div>
           </div>
 
           <div className="field">
             <label className="lbl">Cooldown Period (seconds)</label>
             <input type="number" className="input" value={vals.cooldownSec} onChange={bump('cooldownSec')} />
-            <div className="desc">
-              Minimum interval between swaps. Prevents high-frequency drain attacks. Current: {Number(vals.cooldownSec).toLocaleString()}s.
-            </div>
+            <div className="desc">Minimum interval between swaps per token pair.</div>
           </div>
 
           <div className="field">
             <label className="lbl">Token Whitelist</label>
-            <textarea
-              className="textarea"
-              rows={5}
-              value={vals.whitelist}
-              onChange={bump('whitelist')}
+            <textarea className="textarea" rows={4} value={vals.whitelist} onChange={bump('whitelist')}
               style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
-            />
-            <div className="desc">
-              One address per line. Any swap with a non-whitelisted tokenOut reverts via RuleViolation().
-            </div>
+              placeholder="0x4200...0006  # WETH&#10;0x036c...f7e   # USDC" />
+            <div className="desc">One address per line. Non-whitelisted tokenOut reverts.</div>
           </div>
         </div>
 
@@ -74,10 +120,9 @@ export default function ConfigurePage() {
           <span className="icon">⚠</span>
           <div>
             <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: 4 }}>
-              Changes execute on-chain via SentinelAccount.executeSwap()
+              Changes execute on-chain via PolicyGuard.updatePolicy()
             </div>
-            Gas is sponsored by the Paymaster. Expect ~84k gas for a policy update; transaction is
-            broadcast through the ERC-4337 bundler and confirmed on Base Sepolia within 2 blocks.
+            Connect your wallet (must be PolicyGuard owner) to sign the transaction.
           </div>
         </div>
 
@@ -85,36 +130,16 @@ export default function ConfigurePage() {
           className="btn filled"
           style={{ width: '100%', padding: '14px 20px', fontSize: 13 }}
           onClick={submit}
-          disabled={txState === 'pending'}
+          disabled={isPending}
         >
-          {txState === 'idle' && <>⎔ UPDATE POLICY ON-CHAIN</>}
-          {txState === 'pending' && <>⟳ SUBMITTING USEROP…</>}
-          {txState === 'success' && <>✓ CONFIRMED · BLOCK 12,884,417</>}
+          {isPending ? '⟳ AWAITING CONFIRMATION…' : isSuccess ? '✓ POLICY UPDATED' : '⎔ UPDATE POLICY ON-CHAIN'}
         </button>
 
-        {txState === 'pending' && (
-          <div className="mono" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10, textAlign: 'center' }}>
-            userOpHash 0x7f3a…9c21 · waiting for bundler…
+        {txHash && (
+          <div className="mono" style={{ fontSize: 11, color: isSuccess ? 'var(--green)' : 'var(--text-muted)', marginTop: 10, textAlign: 'center' }}>
+            {isSuccess ? `✓ confirmed · tx ${txHash.slice(0,10)}…` : `tx ${txHash.slice(0,10)}… · waiting for confirmation`}
           </div>
         )}
-        {txState === 'success' && (
-          <div className="mono" style={{ fontSize: 11, color: 'var(--green)', marginTop: 10, textAlign: 'center' }}>
-            ✓ PolicyGuard.setLimits() executed · tx 0x8a7b…3e0f · gas 82,114 (sponsored)
-          </div>
-        )}
-
-        <hr className="hr" />
-
-        <div className="label" style={{ marginBottom: 10 }}>Current On-Chain State</div>
-        <div className="json-block" style={{ maxHeight: 'none' }}>
-{`policyGuard.limits(sentinelAccount) = {
-  maxTradeSizeUsd: ${Number(vals.maxTradeSizeUsd).toLocaleString()},
-  dailyDrawdownUsd: ${Number(vals.dailyDrawdownUsd).toLocaleString()},
-  cooldownSec: ${vals.cooldownSec},
-  lastUpdated: 2026-04-24T09:14:22Z,
-  setBy: ${SENTINEL_DATA.shortAddr}
-}`}
-        </div>
       </div>
     </div>
   )

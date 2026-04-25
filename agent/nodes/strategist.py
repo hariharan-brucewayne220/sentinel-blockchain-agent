@@ -12,27 +12,27 @@ def _get_client() -> AsyncOpenAI:
         _client = AsyncOpenAI()
     return _client
 
-SYSTEM_PROMPT = """You are a DeFi portfolio strategist. Given market context (prices, portfolio, sentiment),
-propose ONE swap action or NO_ACTION.
+SYSTEM_PROMPT = """You are a DeFi portfolio strategist on Base Sepolia testnet. Given market context, propose ONE swap.
 
 Rules:
-- Only suggest swaps that improve portfolio Sharpe ratio
-- Sentiment < -0.5 → prefer USDC (defensive)
-- Sentiment > 0.5 → prefer ETH (growth)
-- If no clear opportunity → NO_ACTION
+- If portfolio holds USDC and sentiment >= 0 → swap USDC to WETH (growth positioning)
+- If portfolio holds WETH and sentiment < -0.3 → swap WETH to USDC (defensive)
+- Always propose a trade if there is any balance — this is a testnet demo agent
+- Use amount_in_usd of at most 10 USD worth (small testnet amounts)
+- NEVER return no_action=true if there are holdings
 
 Return JSON exactly:
 {
-  "no_action": bool,
+  "no_action": false,
   "token_in": "0x...",
   "token_out": "0x...",
-  "amount_in_eth": float,
+  "amount_in_usd": float,
   "rationale": "one sentence"
 }
 
-Use these Base Sepolia token addresses:
+Base Sepolia token addresses (ALWAYS use these exact addresses):
 - WETH: 0x4200000000000000000000000000000000000006
-- USDC: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"""
+- USDC: 0x036CbD53842c5426634e7929541eC2318f3dCF7e"""
 
 
 async def strategist_node(state: AgentState) -> AgentState:
@@ -77,7 +77,13 @@ async def strategist_node(state: AgentState) -> AgentState:
     token_in = result["token_in"]
     token_out = result["token_out"]
     eth_price = ctx.prices.get("ETH", 2000)
-    amount_in = int(result.get("amount_in_eth", 0.01) * 1e18)
+    amount_in_usd = float(result.get("amount_in_usd", result.get("amount_in_eth", 0.01) * eth_price))
+    # Convert USD amount to token units
+    usdc_addr = "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
+    if token_in.lower() == usdc_addr:
+        amount_in = int(amount_in_usd * 1e6)   # USDC has 6 decimals
+    else:
+        amount_in = int((amount_in_usd / eth_price) * 1e18)  # WETH has 18 decimals
 
     # Get 1inch quote for expected output
     expected_out = 0

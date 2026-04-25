@@ -2,13 +2,13 @@ import httpx
 import json
 import os
 
-PINATA_JWT = os.getenv("PINATA_JWT", "")
 PINATA_URL = "https://api.pinata.cloud/pinning/pinJSONToIPFS"
 
 
 async def pin_json(data: dict) -> str:
+    jwt = os.getenv("PINATA_JWT", "")
     headers = {
-        "Authorization": f"Bearer {PINATA_JWT}",
+        "Authorization": f"Bearer {jwt}",
         "Content-Type": "application/json",
     }
     payload = {

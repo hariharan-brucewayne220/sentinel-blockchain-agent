@@ -2,10 +2,17 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { ConnectButton } from '@rainbow-me/rainbowkit'
+import { useAccount, useConnect, useDisconnect } from 'wagmi'
+import { injected } from 'wagmi/connectors'
+import { useEffect, useState } from 'react'
 
 export default function Nav({ agentActive = true }: { agentActive?: boolean }) {
   const pathname = usePathname()
+  const { address, isConnected } = useAccount()
+  const { connect } = useConnect()
+  const { disconnect } = useDisconnect()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
 
   const links = [
     { href: '/', label: 'Dashboard' },
@@ -26,36 +33,21 @@ export default function Nav({ agentActive = true }: { agentActive?: boolean }) {
 
       <div className="nav-center">
         {links.map(({ href, label }) => (
-          <Link
-            key={href}
-            href={href}
-            className={`nav-link nav-label ${isActive(href) ? 'active' : ''}`}
-          >
+          <Link key={href} href={href} className={`nav-link nav-label ${isActive(href) ? 'active' : ''}`}>
             {label}
           </Link>
         ))}
       </div>
 
-      <ConnectButton.Custom>
-        {({ account, chain, openConnectModal, openAccountModal, mounted }) => {
-          if (!mounted) return null
-          if (!account || !chain) {
-            return (
-              <button className="wallet-btn" onClick={openConnectModal}>
-                CONNECT WALLET
-              </button>
-            )
-          }
-          return (
-            <button className="wallet-btn" onClick={openAccountModal}>
-              <span className="avatar" />
-              <span>{account.displayName}</span>
-              <span style={{ opacity: 0.6 }}>·</span>
-              <span style={{ opacity: 0.8 }}>{account.displayBalance ?? '—'}</span>
-            </button>
-          )
-        }}
-      </ConnectButton.Custom>
+      {mounted && isConnected && address ? (
+        <button className="wallet-btn" onClick={() => disconnect()}>
+          {address.slice(0, 6)}…{address.slice(-4)}
+        </button>
+      ) : (
+        <button className="wallet-btn" onClick={() => connect({ connector: injected() })}>
+          CONNECT WALLET
+        </button>
+      )}
     </nav>
   )
 }

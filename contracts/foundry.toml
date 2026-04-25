@@ -11,6 +11,8 @@ remappings = [
     "@chainlink/=lib/chainlink-brownie-contracts/contracts/src/v0.8/"
 ]
 
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
+
 [profile.default.fuzz]
 runs = 10000
 
