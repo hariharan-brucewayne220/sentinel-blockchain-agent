@@ -3,7 +3,7 @@ import { Action, DailyPnL } from "../generated/schema"
 import { BigInt } from "@graphprotocol/graph-ts"
 
 export function handleActionExecuted(event: ActionExecuted): void {
-  let id = event.transaction.hash.concatI32(event.logIndex.toI32())
+  let id = event.transaction.hash.toHexString() + "-" + event.logIndex.toString()
   let action = new Action(id)
   action.actionId = event.params.actionId
   action.tokenIn = event.params.tokenIn

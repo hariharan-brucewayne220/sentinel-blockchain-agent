@@ -84,7 +84,7 @@ export default function Dashboard() {
               {recent.map(a => (
                 <div key={a.id} className="mini-row">
                   <div className="row-top">
-                    <span>{formatTimeAgo(a.ts)}</span>
+                    <span suppressHydrationWarning>{formatTimeAgo(a.ts)}</span>
                     <span>{a.id}</span>
                   </div>
                   <div className="row-main">

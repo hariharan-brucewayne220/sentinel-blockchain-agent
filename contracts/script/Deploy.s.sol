@@ -30,7 +30,7 @@ contract Deploy is Script {
     uint256 constant COOLDOWN_PERIOD      = 5 minutes; // 5 min between trades on same token
 
     // Paymaster pre-fund amount
-    uint256 constant PAYMASTER_DEPOSIT = 0.05 ether;
+    uint256 constant PAYMASTER_DEPOSIT = 0.02 ether;
 
     uint256 constant CHAIN_ID_BASE_SEPOLIA = 84532;
 

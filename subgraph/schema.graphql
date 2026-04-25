@@ -1,4 +1,4 @@
-type Action @entity {
+type Action @entity(immutable: true) {
   id: ID!
   actionId: BigInt!
   tokenIn: Bytes!
@@ -9,7 +9,7 @@ type Action @entity {
   timestamp: BigInt!
 }
 
-type DailyPnL @entity {
+type DailyPnL @entity(immutable: false) {
   id: ID!
   date: String!
   tradeCount: Int!
