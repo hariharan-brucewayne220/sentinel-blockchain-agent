@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sentinel Frontend
 
-## Getting Started
+Next.js 16 dashboard for the Sentinel verifiable AI portfolio agent. Shows live on-chain actions, portfolio P&L, policy configuration, and the full reasoning chain behind every trade.
 
-First, run the development server:
+## Pages
+
+| Route | Description |
+|---|---|
+| `/` | Dashboard — portfolio value, P&L chart, recent actions, contract registry |
+| `/feed` | Action feed — filterable list of all trades with WHY? modal |
+| `/configure` | Policy configuration — update on-chain rules |
+| `/fund` | Fund account — deposit tokens, toggle agent |
+
+## Stack
+
+- Next.js 16 App Router + Turbopack
+- wagmi v2 + RainbowKit — wallet connection and contract reads
+- Apollo Client v3 — subgraph queries with 15s polling
+- Tailwind CSS — utility styling
+- Custom design system — Playfair Display + JetBrains Mono + Syne, amber accent
+
+## Setup
 
 ```bash
+npm install
+cp .env.example .env.local
+# fill in .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment Variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+NEXT_PUBLIC_SUBGRAPH_URL=https://api.studio.thegraph.com/query/1748822/sentinel/v0.0.1
+NEXT_PUBLIC_WALLETCONNECT_ID=your_walletconnect_project_id
+NEXT_PUBLIC_SENTINEL_ACCOUNT=0x287326DDFf84973f9D23e6495cc9d727F14f7F34
+NEXT_PUBLIC_POLICY_GUARD=0xC0375319E7623041875ee485D84A652Da2A36B73
+NEXT_PUBLIC_ACTION_LOG=0x0868A14343fA9A5F12ACdCc716e9f072ec0C0bb4
+NEXT_PUBLIC_PAYMASTER=0x4cA1Dd59F9d690bd1Fa4739AC157A2Bea12924DB
+```
 
-## Learn More
+## Commands
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run dev      # dev server (http://localhost:3000)
+npm run build    # production build
+npm run lint     # ESLint
+```

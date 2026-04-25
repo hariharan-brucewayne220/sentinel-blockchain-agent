@@ -1,6 +1,38 @@
+# Worktrees
 .worktrees/
+
+# Secrets
+.env
+.env.local
+agent/.env
+
+# Python
+agent/.venv/
+**/__pycache__/
+**/*.pyc
+agent/.pytest_cache/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+subgraph/node_modules/
 subgraph/generated/
 subgraph/build/
-subgraph/node_modules/
-frontend/.next/
-frontend/node_modules/
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# ZK artifacts (large binary files)
+zk/model/*.onnx
+zk/model/*.compiled
+zk/model/*.srs
+zk/model/*.key
+zk/model/proof.json
+zk/model/witness.json
+zk/.venv/
+
+# OS
+.DS_Store
+Thumbs.db
