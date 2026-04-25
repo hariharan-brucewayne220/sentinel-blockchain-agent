@@ -102,6 +102,22 @@ Proves only the drawdown check (single comparison). The generated `PolicyVerifie
 | `OPENAI_API_KEY` | agent nodes | gpt-4o (Researcher/Strategist), gpt-4o-mini (RiskCheck/Auditor) |
 | `ONEINCH_API_KEY` | agent strategist | DEX quotes |
 | `NEXT_PUBLIC_SUBGRAPH_URL` | frontend | Apollo endpoint |
+| `SUPABASE_URL` | agent db | Supabase project URL |
+| `SUPABASE_KEY` | agent db | Supabase anon/service key |
 | `NEXT_PUBLIC_WALLETCONNECT_ID` | frontend | RainbowKit |
 
 Store in `.env` files per module (`.env` at each subdirectory root, never committed).
+
+## Supabase Table Migration
+
+Run once in the Supabase SQL editor to create the `action_records` table:
+
+```sql
+create table action_records (
+  id           bigserial primary key,
+  agent_run_id text unique not null,
+  timestamp    timestamptz not null,
+  data         jsonb not null
+);
+create index on action_records (timestamp desc);
+```
