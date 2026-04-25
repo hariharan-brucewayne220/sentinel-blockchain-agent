@@ -1,0 +1,18 @@
+type Action @entity {
+  id: ID!
+  actionId: BigInt!
+  tokenIn: Bytes!
+  tokenOut: Bytes!
+  amountIn: BigInt!
+  amountOut: BigInt!
+  reasoningCID: String!
+  timestamp: BigInt!
+}
+
+type DailyPnL @entity {
+  id: ID!
+  date: String!
+  tradeCount: Int!
+  totalAmountIn: BigInt!
+  totalAmountOut: BigInt!
+}
