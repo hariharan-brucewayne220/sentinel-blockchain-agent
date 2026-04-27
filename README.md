@@ -1,26 +1,17 @@
 # Sentinel — Verifiable AI Portfolio Agent
 
-An autonomous AI agent that manages an on-chain portfolio through an ERC-4337 smart account, constrained by on-chain policy guard contracts. Every trade decision's reasoning is pinned to IPFS and auditable from a dashboard.
+An autonomous AI agent that manages a crypto portfolio on Base Sepolia via an ERC-4337 smart account, constrained by on-chain policy guard contracts. Every trade decision is pinned to IPFS and auditable from a live dashboard.
 
-**Stack:** Python · LangGraph · Solidity · ERC-4337 · The Graph · Next.js · Base Sepolia
+## What It Does
 
----
+The agent runs a LangGraph pipeline every 15 minutes:
+1. **Researcher** — fetches live prices, holdings, and market sentiment
+2. **Strategist** — proposes a swap using GPT-4o and 1inch quotes
+3. **Risk Check** — validates the proposal against on-chain policy rules
+4. **Executor** — builds an ERC-4337 UserOperation, pins reasoning to IPFS, broadcasts via Pimlico
+5. **Auditor** — saves the full action record to Supabase
 
-## Screenshots
-
-### Dashboard
-![Dashboard](docs/screenshots/dashboard.jpg)
-
-### Action Feed
-![Feed](docs/screenshots/feed.jpg)
-
-### Configure Policy
-![Configure](docs/screenshots/configure.jpg)
-
-### Fund Account
-![Fund](docs/screenshots/fund.jpg)
-
----
+Every on-chain action emits an event indexed by The Graph subgraph. The frontend reads it via Apollo and lets you click **WHY?** on any trade to see the full reasoning chain — market context, policy decision, strategist rationale, and ZK attestation.
 
 ## Architecture
 
@@ -91,41 +82,87 @@ npm run dev       # http://localhost:3000
 cd agent
 uv venv .venv && source .venv/bin/activate
 uv pip install -r requirements.txt
-python -m agent.main
+cp .env.example .env   # fill in your keys
+python -m agent.main           # single cycle
+python -m agent.main --loop    # 15-min cron
 ```
 
-### Agent (loop every 15 min)
+### 3. Frontend
+
 ```bash
-python -m agent.main --loop
+cd frontend
+npm install
+cp .env.example .env.local     # fill in subgraph URL and contract addresses
+npm run dev
 ```
 
----
+Open http://localhost:3000
+
+### 4. Subgraph
+
+```bash
+cd subgraph
+npm install
+graph auth <deploy-key>
+graph codegen && graph build
+graph deploy sentinel
+```
 
 ## Environment Variables
 
 ### Agent (`agent/.env`)
-```
-PRIVATE_KEY=
-BASE_SEPOLIA_RPC=
-PIMLICO_API_KEY=
-PINATA_JWT=
-OPENAI_API_KEY=
-ONEINCH_API_KEY=
-SUPABASE_URL=
-SUPABASE_KEY=
-```
+
+| Variable | Purpose |
+|---|---|
+| `PRIVATE_KEY` | Agent signing wallet private key |
+| `BASE_SEPOLIA_RPC` | RPC endpoint (default: https://sepolia.base.org) |
+| `PIMLICO_API_KEY` | ERC-4337 bundler (pimlico.io) |
+| `PINATA_JWT` | IPFS pinning (pinata.cloud) |
+| `OPENAI_API_KEY` | GPT-4o for researcher/strategist nodes |
+| `ONEINCH_API_KEY` | DEX swap quotes (portal.1inch.dev) |
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_KEY` | Supabase anon key |
+| `SENTINEL_ACCOUNT_ADDRESS` | Deployed proxy address |
+| `POLICY_GUARD_ADDRESS` | Deployed PolicyGuard address |
+| `ACTION_LOG_ADDRESS` | Deployed ActionLog address |
+| `PAYMASTER_ADDRESS` | Deployed SentinelPaymaster address |
 
 ### Frontend (`frontend/.env.local`)
+
+| Variable | Purpose |
+|---|---|
+| `NEXT_PUBLIC_SUBGRAPH_URL` | The Graph Studio query endpoint |
+| `NEXT_PUBLIC_WALLETCONNECT_ID` | RainbowKit WalletConnect project ID |
+| `NEXT_PUBLIC_SENTINEL_ACCOUNT` | SentinelAccount proxy address |
+| `NEXT_PUBLIC_POLICY_GUARD` | PolicyGuard address |
+| `NEXT_PUBLIC_ACTION_LOG` | ActionLog address |
+
+## Supabase Migration
+
+Run once in the SQL editor:
+
+```sql
+create table action_records (
+  id           bigserial primary key,
+  agent_run_id text unique not null,
+  timestamp    timestamptz not null,
+  data         jsonb not null
+);
+create index on action_records (timestamp desc);
 ```
-NEXT_PUBLIC_SUBGRAPH_URL=
-NEXT_PUBLIC_SENTINEL_ACCOUNT=
-NEXT_PUBLIC_POLICY_GUARD=
-NEXT_PUBLIC_ACTION_LOG=
-NEXT_PUBLIC_PAYMASTER=
+
+## ZK Attestation
+
+The drawdown check is provable via EZKL:
+
+```bash
+cd zk
+pip install ezkl torch onnx
+python export_model.py       # export PyTorch model to ONNX
+python generate_proof.py     # run full EZKL pipeline → PolicyVerifier.sol
+cp model/PolicyVerifier.sol ../contracts/src/PolicyVerifier.sol
 ```
 
----
+## License
 
-## Academic Context
-
-Per the agent-blockchain standards survey (arxiv:2601.04583), Sentinel operates at **Execution Level 4 — Autonomous Signing**: the agent independently signs and submits UserOperations without human approval per transaction, constrained only by on-chain policy contracts.
+MIT
