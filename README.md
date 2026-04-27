@@ -13,6 +13,16 @@ The agent runs a LangGraph pipeline every 15 minutes:
 
 Every on-chain action emits an event indexed by The Graph subgraph. The frontend reads it via Apollo and lets you click **WHY?** on any trade to see the full reasoning chain — market context, policy decision, strategist rationale, and ZK attestation.
 
+## Screenshots
+
+| Dashboard | Action Feed |
+|-----------|-------------|
+| ![Dashboard](docs/screenshots/dashboard.jpg) | ![Feed](docs/screenshots/feed.jpg) |
+
+| Configure Policy | Fund Account |
+|-----------------|-------------|
+| ![Configure](docs/screenshots/configure.jpg) | ![Fund](docs/screenshots/fund.jpg) |
+
 ## Architecture
 
 ```
