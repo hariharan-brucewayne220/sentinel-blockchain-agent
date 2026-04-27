@@ -13,47 +13,81 @@ The agent runs a LangGraph pipeline every 15 minutes:
 
 Every on-chain action emits an event indexed by The Graph subgraph. The frontend reads it via Apollo and lets you click **WHY?** on any trade to see the full reasoning chain — market context, policy decision, strategist rationale, and ZK attestation.
 
+## Screenshots
+
+| Dashboard | Action Feed |
+|-----------|-------------|
+| ![Dashboard](docs/screenshots/dashboard.jpg) | ![Feed](docs/screenshots/feed.jpg) |
+
+| Configure Policy | Fund Account |
+|-----------------|-------------|
+| ![Configure](docs/screenshots/configure.jpg) | ![Fund](docs/screenshots/fund.jpg) |
+
 ## Architecture
 
 ```
-sentinel/
-├── contracts/      # Foundry — ERC-4337 smart contracts
-├── agent/          # Python — LangGraph pipeline
-├── subgraph/       # The Graph — ActionLog event indexer
-├── frontend/       # Next.js 16 — dashboard + feed + policy UI
-└── zk/             # EZKL — ZK policy attestation (drawdown check)
+┌─────────────────────────────────────────────────────────┐
+│                     FRONTEND (Next.js)                   │
+│  Connect → Fund → Configure Policy → Watch Feed → Why?  │
+└────────────────────────┬────────────────────────────────┘
+                         │ wagmi / viem / Apollo
+┌────────────────────────▼────────────────────────────────┐
+│                   AGENT LAYER (Python)                   │
+│  LangGraph: Researcher → Strategist → Risk → Executor   │
+│                        ↓                                │
+│              IPFS (Pinata) — reasoning JSON             │
+└────────────────────────┬────────────────────────────────┘
+                         │ ERC-4337 UserOperation
+┌────────────────────────▼────────────────────────────────┐
+│              EXECUTION INFRA                             │
+│  Pimlico bundler → Paymaster (gasless) → EntryPoint     │
+└────────────────────────┬────────────────────────────────┘
+                         │ on-chain
+┌────────────────────────▼────────────────────────────────┐
+│                   CONTRACT LAYER (Solidity)              │
+│  SentinelAccount (ERC-4337) + PolicyGuard + ActionLog   │
+└────────────────────────┬────────────────────────────────┘
+                         │ events
+┌────────────────────────▼────────────────────────────────┐
+│               INDEXER (The Graph)                        │
+│  ActionLog.ActionExecuted → Action + DailyPnL entities  │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Contracts (Base Sepolia)
+---
+
+## Key Data Flow
+
+1. Agent builds an ERC-4337 `UserOperation` with `SentinelAccount.execute()` calldata
+2. Reasoning JSON is pinned to IPFS (Pinata) — CID injected into calldata
+3. UserOperation submitted to Pimlico bundler; `SentinelPaymaster` sponsors gas
+4. On-chain: `PolicyGuard.checkPolicy()` enforces rules, then DEX swap executes, `ActionLog` emits event with IPFS CID
+5. The Graph indexes the event; frontend polls via Apollo every 15s
+6. "Why?" button fetches the IPFS blob and renders the full reasoning chain
+
+---
+
+## Deployed Contracts (Base Sepolia)
 
 | Contract | Address |
-|---|---|
-| SentinelAccount (proxy) | `0x287326DDFf84973f9D23e6495cc9d727F14f7F34` |
+|----------|---------|
+| SentinelAccount | `0x287326DDFf84973f9D23e6495cc9d727F14f7F34` |
 | PolicyGuard | `0xC0375319E7623041875ee485D84A652Da2A36B73` |
 | ActionLog | `0x0868A14343fA9A5F12ACdCc716e9f072ec0C0bb4` |
 | SentinelPaymaster | `0x4cA1Dd59F9d690bd1Fa4739AC157A2Bea12924DB` |
-| EntryPoint (v0.7) | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` |
 
-## Tech Stack
+---
 
-- **Contracts** — Solidity 0.8.24, Foundry, ERC-4337, OpenZeppelin UUPS, Chainlink oracles
-- **Agent** — Python, LangGraph, OpenAI GPT-4o, web3.py, Pimlico bundler, Pinata IPFS, Supabase
-- **Subgraph** — The Graph, AssemblyScript
-- **Frontend** — Next.js 16, wagmi v2, RainbowKit, Apollo Client, Tailwind CSS
-- **ZK** — EZKL, PyTorch ONNX export
+## Running Locally
 
-## Quickstart
-
-### 1. Contracts
-
+### Frontend
 ```bash
-cd contracts
-forge build
-forge test
+cd frontend
+npm install
+npm run dev       # http://localhost:3000
 ```
 
-### 2. Agent
-
+### Agent (one cycle)
 ```bash
 cd agent
 uv venv .venv && source .venv/bin/activate

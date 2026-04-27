@@ -2,30 +2,105 @@
 
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
+import { useState } from 'react'
+import { useQuery } from '@apollo/client'
+import { useBalance } from 'wagmi'
+import { formatUnits } from 'viem'
 import AgentStatusBadge from '@/components/AgentStatusBadge'
 import WhyModal, { type Action } from '@/components/WhyModal'
-import { SENTINEL_DATA, formatTimeAgo, fmtUsd } from '@/lib/data'
-import { useState } from 'react'
+import { SENTINEL_DATA, formatTimeAgo } from '@/lib/data'
+import { ACTIONS_QUERY, tokenSymbol, formatWei } from '@/lib/queries'
+import { gql } from '@apollo/client'
 
 const PnLChart = dynamic(() => import('@/components/PnLChart'), { ssr: false })
+
+const SENTINEL_ACCOUNT = (process.env.NEXT_PUBLIC_SENTINEL_ACCOUNT ?? '0x287326DDFf84973f9D23e6495cc9d727F14f7F34') as `0x${string}`
+const POLICY_GUARD = process.env.NEXT_PUBLIC_POLICY_GUARD ?? '0xC0375319E7623041875ee485D84A652Da2A36B73'
+const PAYMASTER = process.env.NEXT_PUBLIC_PAYMASTER ?? '0x4cA1Dd59F9d690bd1Fa4739AC157A2Bea12924DB'
+
+const DAILY_PNL_QUERY = gql`
+  query GetDailyPnL {
+    dailyPnLs(first: 14, orderBy: date, orderDirection: asc) {
+      id
+      date
+      tradeCount
+      totalAmountIn
+      totalAmountOut
+    }
+  }
+`
 
 function PnlPill({ n }: { n: number }) {
   if (n === 0) return <span className="pill muted">— $0.00</span>
   return (
     <span className={`pill ${n > 0 ? 'green' : 'red'}`}>
-      {n > 0 ? '▲' : '▼'} {fmtUsd(n)}
+      {n > 0 ? '▲' : '▼'} ${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}
     </span>
   )
 }
 
+function shortId(id: string): string {
+  const hash = id.split('-')[0]
+  return `${hash.slice(0, 8)}…${hash.slice(-4)}`
+}
+
 export default function Dashboard() {
-  const D = SENTINEL_DATA
   const [whyAction, setWhyAction] = useState<Action | null>(null)
-  const recent = D.actions.slice(0, 3)
-  const total = D.dailyPnL[D.dailyPnL.length - 1].totalAmountOut
-  const pnl14d = total - D.dailyPnL[0].totalAmountOut
-  const dollars = Math.floor(total).toLocaleString()
-  const cents = (total % 1).toFixed(2).slice(2)
+
+  // Real on-chain ETH balance
+  const { data: ethBalance } = useBalance({ address: SENTINEL_ACCOUNT, chainId: 84532 })
+
+  // Real subgraph data
+  const { data: actionsData } = useQuery(ACTIONS_QUERY, {
+    variables: { first: 20, skip: 0 },
+    pollInterval: 15000,
+  })
+  const { data: pnlData } = useQuery(DAILY_PNL_QUERY, { pollInterval: 15000 })
+
+  const isLive = actionsData?.actions?.length > 0
+
+  // Build recent actions from real data or fall back to mock
+  const recentActions: Action[] = isLive
+    ? actionsData.actions.slice(0, 3).map((raw: Record<string, string>) => ({
+        id: raw.id,
+        ts: Number(raw.timestamp) * 1000,
+        tokenIn: tokenSymbol(raw.tokenIn),
+        tokenOut: tokenSymbol(raw.tokenOut),
+        amountIn: formatWei(raw.amountIn, raw.tokenIn),
+        amountOut: formatWei(raw.amountOut, raw.tokenOut),
+        pnl: 0,
+        outcome: 'filled' as const,
+        cid: raw.reasoningCID,
+        txHash: null,
+        sentiment: 0,
+        policy: [],
+        rationale: '',
+        docs: [],
+        zk: false,
+        proofCid: null,
+      }))
+    : SENTINEL_DATA.actions.slice(0, 3)
+
+  const totalActions = isLive ? actionsData.actions.length : SENTINEL_DATA.actions.length
+
+  // Portfolio value from real ETH balance + USDC
+  const ethFormatted = ethBalance?.value != null ? Number(formatUnits(ethBalance.value, ethBalance.decimals)) : null
+  const ethVal = ethFormatted !== null ? ethFormatted * 2315 : null
+  const portfolioUsd = isLive && ethVal !== null ? ethVal + 20 : isLive ? 20 : 40_312.56
+
+  // PnL chart data — subgraph stores cumulative USDC amounts (6 decimals)
+  const chartData = pnlData?.dailyPnLs?.length > 0
+    ? pnlData.dailyPnLs.map((d: Record<string, string>) => ({
+        date: d.date,
+        tradeCount: Number(d.tradeCount),
+        totalAmountIn: Number(d.totalAmountIn) / 1e6,
+        totalAmountOut: Number(d.totalAmountOut) / 1e6,
+      }))
+    : SENTINEL_DATA.dailyPnL
+
+  const portfolioDisplay = portfolioUsd || 0
+  const dollars = Math.floor(portfolioDisplay).toLocaleString()
+  const cents = (portfolioDisplay % 1).toFixed(2).slice(2)
 
   return (
     <>
@@ -41,15 +116,16 @@ export default function Dashboard() {
               ${dollars}<span className="cents">.{cents}</span>
             </div>
             <div className="stat-sub">
-              managed by sentinel · base-sepolia · {D.sentinelAccount.slice(0, 10)}…
+              managed by sentinel · base-sepolia · {SENTINEL_ACCOUNT.slice(0, 10)}…
+              {isLive && <span style={{ color: 'var(--green)', marginLeft: 8 }}>· live</span>}
             </div>
 
             <div style={{ display: 'flex', gap: 14, marginTop: 24, flexWrap: 'wrap' }}>
               {[
-                { label: '14d P&L', value: <span className="mono amber" style={{ fontSize: 20 }}>{pnl14d >= 0 ? '+' : '-'}${Math.abs(pnl14d).toLocaleString()}</span> },
-                { label: 'Actions · 24h', value: <span className="mono amber" style={{ fontSize: 20 }}>8</span> },
-                { label: 'Win Rate · 14d', value: <span className="mono" style={{ fontSize: 20, color: 'var(--green)' }}>68.4%</span> },
-                { label: 'Gas Sponsored', value: <span className="mono amber" style={{ fontSize: 20 }}>0.042 ETH</span> },
+                { label: 'ETH Balance', value: <span className="mono amber" style={{ fontSize: 20 }}>{ethFormatted !== null ? ethFormatted.toFixed(4) : '—'} ETH</span> },
+                { label: 'Total Actions', value: <span className="mono amber" style={{ fontSize: 20 }}>{totalActions}</span> },
+                { label: 'Network', value: <span className="mono" style={{ fontSize: 16, color: 'var(--green)' }}>Base Sepolia</span> },
+                { label: 'Status', value: <span className="mono amber" style={{ fontSize: 16 }}>{isLive ? 'LIVE' : 'DEMO'}</span> },
               ].map(({ label, value }) => (
                 <div key={label} className="card" style={{ padding: '14px 18px', minWidth: 160 }}>
                   <div className="label">{label}</div>
@@ -63,12 +139,12 @@ export default function Dashboard() {
                 <div>
                   <div className="label">Cumulative Value · 14d</div>
                   <div className="mono" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                    source: subgraph · DAILY_PNL · synced 14s ago
+                    {isLive ? 'live · subgraph · 15s poll' : 'demo data · subgraph indexing'}
                   </div>
                 </div>
-                <span className="pill amber">LIVE</span>
+                <span className="pill amber">{isLive ? 'LIVE' : 'DEMO'}</span>
               </div>
-              <PnLChart data={D.dailyPnL} />
+              <PnLChart data={chartData} />
             </div>
           </div>
 
@@ -78,14 +154,14 @@ export default function Dashboard() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <div className="label">Recent Actions</div>
                 <span className="mono" style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                  {recent.length}/{D.actions.length}
+                  {recentActions.length}/{totalActions}
                 </span>
               </div>
-              {recent.map(a => (
+              {recentActions.map(a => (
                 <div key={a.id} className="mini-row">
                   <div className="row-top">
                     <span suppressHydrationWarning>{formatTimeAgo(a.ts)}</span>
-                    <span>{a.id}</span>
+                    <span className="mono" style={{ fontSize: 10 }}>{shortId(a.id)}</span>
                   </div>
                   <div className="row-main">
                     <span className="mono" style={{ fontSize: 12 }}>
@@ -109,13 +185,21 @@ export default function Dashboard() {
               <div className="label" style={{ marginBottom: 12 }}>Contract Registry</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 11 }}>
                 {[
-                  { label: 'SentinelAccount', addr: D.sentinelAccount },
-                  { label: 'PolicyGuard', addr: D.policyGuard },
-                  { label: 'Paymaster', addr: D.paymaster },
+                  { label: 'SentinelAccount', addr: SENTINEL_ACCOUNT },
+                  { label: 'PolicyGuard', addr: POLICY_GUARD },
+                  { label: 'Paymaster', addr: PAYMASTER },
                 ].map(({ label, addr }) => (
                   <div key={label}>
                     <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>{label}</div>
-                    <div className="mono amber">{addr.slice(0, 10)}…{addr.slice(-6)}</div>
+                    <a
+                      href={`https://sepolia.basescan.org/address/${addr}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mono amber"
+                      style={{ textDecoration: 'none' }}
+                    >
+                      {addr.slice(0, 10)}…{addr.slice(-6)}
+                    </a>
                   </div>
                 ))}
               </div>
