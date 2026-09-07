@@ -177,6 +177,8 @@ Responsibilities:
 
 Outputs: `RiskCheckResult` (pass/fail + per-rule breakdown) — this is what the ZK circuit proves in the differentiator module
 
+> **Implementation note (as built):** `agent/nodes/risk_check.py` reads the PolicyGuard parameters on-chain and then asks `gpt-4o-mini` to produce the pass/fail JSON. The local simulation is therefore LLM-judged, not a deterministic re-implementation of the rules; the deterministic enforcement is `PolicyGuard.checkPolicy()` reverting the UserOperation.
+
 #### `Executor`
 Inputs: approved `ProposedAction`
 
@@ -265,6 +267,8 @@ This blob is what the frontend "Why?" button fetches and renders.
 - Validates caller is a registered SentinelAccount
 - For demo: pre-funded with 0.1 ETH
 
+> **Implementation note (as built):** the paymaster is deployed, registered and funded with 0.02 ETH by `Deploy.s.sol`, but `agent/nodes/executor.py` sends UserOperations with all `paymaster*` fields `None`, so operations are not sponsored yet and the account pays its own gas.
+
 ### Subgraph (The Graph)
 Indexes `ActionLog.ActionExecuted` events.
 
@@ -347,6 +351,8 @@ Submits via `wagmi.writeContract` → SentinelAccount → PolicyGuard.
 **Academic framing:** Sentinel implements a **ZKPoI (Zero-Knowledge Proof of Inference)** as defined in "Framework for End-to-End Verifiable AI Pipelines" (arxiv:2503.22573). This is Stage 5 of the academic six-stage verifiable AI pipeline — proving a specific model made a correct inference on a given input, without revealing private parameters.
 
 **What it proves:** The RiskCheck node actually evaluated the drawdown policy it claims to have run — not a different policy, not a skipped check.
+
+> **Implementation note (as built):** scaffold only. `contracts/src/PolicyVerifier.sol` is a placeholder that returns `true` for any non-empty proof and is not deployed; `zk/export_model.py` and `zk/generate_proof.py` exist but nothing in the agent calls them.
 
 **Implementation:**
 

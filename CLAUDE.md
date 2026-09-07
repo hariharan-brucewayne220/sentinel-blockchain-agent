@@ -13,8 +13,8 @@ sentinel/
 ├── contracts/      # Foundry — Solidity contracts + tests
 ├── agent/          # Python — LangGraph pipeline
 ├── subgraph/       # The Graph — ActionLog indexer
-├── frontend/       # Next.js 14 — dashboard + feed + policy UI
-└── zk/             # EZKL — ZK policy attestation (differentiator)
+├── frontend/       # Next.js 16 — dashboard + feed + policy UI
+└── zk/             # EZKL — ZK policy attestation scaffold (verifier is a placeholder)
 ```
 
 ## Contracts (Foundry)
@@ -30,21 +30,28 @@ forge script script/Deploy.s.sol --rpc-url base_sepolia --broadcast
 forge verify-contract <addr> src/PolicyGuard.sol:PolicyGuard --chain base-sepolia
 ```
 
-Coverage target is **>90%**. Tests live in `contracts/test/` and are split by contract (`SentinelAccount.t.sol`, `PolicyGuard.t.sol`, `ActionLog.t.sol`, `Integration.t.sol`). Deployment addresses are committed to `contracts/deployments/base-sepolia.json`.
+Coverage target is **>90%**. Tests live in `contracts/test/` and are split by contract (`SentinelAccount.t.sol`, `PolicyGuard.t.sol`, `ActionLog.t.sol`, `SentinelPaymaster.t.sol`; there is no `Integration.t.sol`). Deployment addresses are committed to `contracts/deployments/base-sepolia.json`.
 
 ## Agent (Python + LangGraph)
 
+Run from the repository root — `agent/` is a package (`agent/main.py` imports `agent.graph`),
+which is how `.github/workflows/agent.yml` and `nixpacks.toml` invoke it:
+
 ```bash
-cd agent
 uv venv .venv && source .venv/bin/activate
-uv pip install -r requirements.txt
-python main.py            # run one agent cycle
-python main.py --loop     # run on 15-minute cron
-pytest                    # unit tests
-pytest tests/test_risk_check.py  # single test file
+uv pip install -r agent/requirements.txt
+python -m agent.main            # run one agent cycle
+python -m agent.main --loop     # run on 15-minute cron
+python -m pytest agent/tests    # unit tests (they import agent.*)
+python -m pytest agent/tests/test_risk_check.py  # single test file
 ```
 
 The graph definition is in `agent/graph.py`. Nodes are in `agent/nodes/` (researcher, strategist, risk_check, executor, auditor). Shared schemas (Pydantic models) are in `agent/schemas.py`. Tool implementations are in `agent/tools/`.
+
+Current behaviour to keep in mind (see README "Implementation Status"):
+- `risk_check.py` reads PolicyGuard params on-chain and asks `gpt-4o-mini` to judge pass/fail; the deterministic gate is `PolicyGuard.checkPolicy()` reverting on-chain.
+- `executor.py` builds the v0.7 UserOp with all `paymaster*` fields `None`, so the deployed `SentinelPaymaster` is not used and the account pays gas.
+- `tools/uniswap.py` encodes a Uniswap V3 `exactInputSingle` call but targets `MockDex.sol` (`0x992e…a936`), not a Uniswap router.
 
 ## Subgraph (The Graph)
 
@@ -67,7 +74,7 @@ npm run build     # production build
 npm run lint      # ESLint
 ```
 
-Uses Next.js 14 App Router. Contract interaction via wagmi v2 + viem. Subgraph queries via Apollo Client with 15s polling. IPFS reasoning blobs fetched client-side in the "Why?" modal (`components/WhyModal`). Wagmi config is in `frontend/lib/wagmi.ts`, Apollo config in `frontend/lib/apollo.ts`.
+Uses Next.js 16.2 App Router with Turbopack (`frontend/package.json`: `next` 16.2.4, `react` 19.2.4). Contract interaction via wagmi 3.6 + viem 2 using only the `injected()` connector — RainbowKit was removed, although `frontend/next.config.ts` still lists `@rainbow-me/rainbowkit` in `transpilePackages` (harmless leftover). Subgraph queries via Apollo Client with 15s polling. IPFS reasoning blobs fetched client-side in the "Why?" modal (`components/WhyModal`). Wagmi config is in `frontend/lib/wagmi.ts`, Apollo config in `frontend/lib/apollo.ts`.
 
 ## ZK Attestation (EZKL)
 
@@ -82,12 +89,14 @@ ezkl prove
 
 Proves only the drawdown check (single comparison). The generated `PolicyVerifier.sol` goes into `contracts/src/`. Proof CID is stored alongside the reasoning blob in IPFS under the `proof_cid` field.
 
+Status: scaffold only. The committed `contracts/src/PolicyVerifier.sol` is a placeholder that returns `true` for any non-empty proof, it is not deployed, and no node in `agent/` generates or submits proofs. The frontend shows a ZK badge only for the demo rows in `frontend/lib/data.ts`.
+
 ## Key Cross-Module Data Flow
 
-1. Agent Executor builds an ERC-4337 `UserOperation` containing `SentinelAccount.execute()` calldata.
+1. Agent Executor builds an ERC-4337 v0.7 `UserOperation` containing `SentinelAccount.executeSwap()` calldata.
 2. Before submission, Executor pins a reasoning JSON blob to IPFS via Pinata and injects the CID into the calldata.
-3. The UserOperation is submitted to Pimlico's bundler (`eth_sendUserOperation`); `SentinelPaymaster` sponsors gas.
-4. On-chain: `SentinelAccount` calls `PolicyGuard.checkPolicy()` — reverts if any rule is violated — then calls the DEX swap and emits `ActionLog.ActionExecuted` with the IPFS CID.
+3. The UserOperation is submitted to Pimlico's bundler (`eth_sendUserOperation`). Gas is paid from the account's own EntryPoint deposit; `SentinelPaymaster` is deployed but not attached to the UserOp (paymaster fields are `None` in `executor.py`).
+4. On-chain: `SentinelAccount` calls `PolicyGuard.checkPolicy()` — reverts if any rule is violated — then calls the DEX (currently `MockDex.sol`) and emits `ActionLog.ActionExecuted` with the IPFS CID.
 5. The Graph subgraph indexes the event; the frontend reads it via Apollo.
 6. The frontend "Why?" button fetches the IPFS blob by CID and renders the full reasoning chain.
 
@@ -99,12 +108,12 @@ Proves only the drawdown check (single comparison). The generated `PolicyVerifie
 | `BASE_SEPOLIA_RPC` | contracts, agent | RPC endpoint |
 | `PIMLICO_API_KEY` | agent executor | bundler access |
 | `PINATA_JWT` | agent executor | IPFS pinning |
-| `OPENAI_API_KEY` | agent nodes | gpt-4o (Researcher/Strategist), gpt-4o-mini (RiskCheck/Auditor) |
+| `OPENAI_API_KEY` | agent nodes | gpt-4o (Researcher/Strategist), gpt-4o-mini (RiskCheck; the Auditor makes no LLM call) |
 | `ONEINCH_API_KEY` | agent strategist | DEX quotes |
 | `NEXT_PUBLIC_SUBGRAPH_URL` | frontend | Apollo endpoint |
 | `SUPABASE_URL` | agent db | Supabase project URL |
 | `SUPABASE_KEY` | agent db | Supabase anon/service key |
-| `NEXT_PUBLIC_WALLETCONNECT_ID` | frontend | RainbowKit |
+| `NEXT_PUBLIC_WALLETCONNECT_ID` | frontend | unused — RainbowKit removed, wallet connect is wagmi `injected()` only |
 
 Store in `.env` files per module (`.env` at each subdirectory root, never committed).
 

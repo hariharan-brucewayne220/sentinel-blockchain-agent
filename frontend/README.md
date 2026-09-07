@@ -14,7 +14,7 @@ Next.js 16 dashboard for the Sentinel verifiable AI portfolio agent. Shows live 
 ## Stack
 
 - Next.js 16 App Router + Turbopack
-- wagmi v2 + RainbowKit — wallet connection and contract reads
+- wagmi 3 + viem — wallet connection via the `injected()` browser-wallet connector only (RainbowKit was removed; the `@rainbow-me/rainbowkit` entry in `next.config.ts` `transpilePackages` is a leftover) and contract reads/writes
 - Apollo Client v3 — subgraph queries with 15s polling
 - Tailwind CSS — utility styling
 - Custom design system — Playfair Display + JetBrains Mono + Syne, amber accent
@@ -34,7 +34,7 @@ Open http://localhost:3000
 
 ```bash
 NEXT_PUBLIC_SUBGRAPH_URL=https://api.studio.thegraph.com/query/1748822/sentinel/v0.0.1
-NEXT_PUBLIC_WALLETCONNECT_ID=your_walletconnect_project_id
+NEXT_PUBLIC_WALLETCONNECT_ID=your_walletconnect_project_id   # unused (RainbowKit removed)
 NEXT_PUBLIC_SENTINEL_ACCOUNT=0x287326DDFf84973f9D23e6495cc9d727F14f7F34
 NEXT_PUBLIC_POLICY_GUARD=0xC0375319E7623041875ee485D84A652Da2A36B73
 NEXT_PUBLIC_ACTION_LOG=0x0868A14343fA9A5F12ACdCc716e9f072ec0C0bb4
