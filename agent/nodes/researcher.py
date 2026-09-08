@@ -25,12 +25,12 @@ async def researcher_node(state: AgentState) -> AgentState:
     prices = get_chainlink_prices(["ETH", "BTC"])
 
     # Read live on-chain balances first (source of truth)
+    # A failure here must NOT be swallowed: an unreachable RPC would otherwise look
+    # identical to a genuinely empty portfolio, and the strategist would size trades
+    # against a fabricated $0 balance. Fail the cycle instead.
     holdings: dict[str, float] = {}
     if ACCOUNT_ADDRESS:
-        try:
-            holdings = get_token_balances(ACCOUNT_ADDRESS)
-        except Exception:
-            holdings = {}
+        holdings = get_token_balances(ACCOUNT_ADDRESS)
 
     # Lightweight RAG sentiment: ask gpt-4o for a quick market read
     sentiment_score = 0.0

@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "Cross-language fixture for ERC-4337 v0.7 `paymasterAndData` packing.",
+    "`packed` is the exact byte string produced by the Python agent's",
+    "agent/tools/userop.py::pack_paymaster_and_data for the sibling input fields",
+    "(which are verbatim bundler-JSON values).",
+    "Both sides assert against this file, so neither can drift silently:",
+    "  - agent/tests/test_userop.py re-packs the inputs and asserts it equals `packed`.",
+    "  - contracts/test/PaymasterAndDataCrossLang.t.sol feeds `packed` through the real",
+    "    account-abstraction UserOperationLib.unpackPaymasterStaticFields and asserts the",
+    "    paymaster address and both gas limits come back out.",
+    "If the packing legitimately changes, update `packed` here; both suites must stay green."
+  ],
+  "cases": [
+    {
+      "name": "sponsored_without_paymaster_data",
+      "paymaster": "0x4cA1Dd59F9d690bd1Fa4739AC157A2Bea12924DB",
+      "paymasterVerificationGasLimit": "0x186a0",
+      "paymasterPostOpGasLimit": "0xc350",
+      "paymasterData": "0x",
+      "packed": "0x4ca1dd59f9d690bd1fa4739ac157a2bea12924db000000000000000000000000000186a00000000000000000000000000000c350"
+    },
+    {
+      "name": "sponsored_with_paymaster_data",
+      "paymaster": "0x4cA1Dd59F9d690bd1Fa4739AC157A2Bea12924DB",
+      "paymasterVerificationGasLimit": "0x186a0",
+      "paymasterPostOpGasLimit": "0xc350",
+      "paymasterData": "0xabcd01",
+      "packed": "0x4ca1dd59f9d690bd1fa4739ac157a2bea12924db000000000000000000000000000186a00000000000000000000000000000c350abcd01"
+    },
+    {
+      "name": "max_uint128_gas_limits",
+      "paymaster": "0x4cA1Dd59F9d690bd1Fa4739AC157A2Bea12924DB",
+      "paymasterVerificationGasLimit": "0xffffffffffffffffffffffffffffffff",
+      "paymasterPostOpGasLimit": "0xffffffffffffffffffffffffffffffff",
+      "paymasterData": "0x",
+      "packed": "0x4ca1dd59f9d690bd1fa4739ac157a2bea12924dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  ]
+}

@@ -24,11 +24,11 @@ def get_token_balances(account: str) -> dict[str, float]:
     w3 = Web3(Web3.HTTPProvider(RPC_URL))
     balances: dict[str, float] = {}
 
-    try:
-        eth_wei = w3.eth.get_balance(Web3.to_checksum_address(account))
-        balances["ETH"] = eth_wei / 1e18
-    except Exception:
-        pass
+    # The native-balance read is the canary for the RPC itself. If it fails the
+    # endpoint is unreachable/misconfigured, and returning {} here would be
+    # indistinguishable from a genuinely empty account - so let it propagate.
+    eth_wei = w3.eth.get_balance(Web3.to_checksum_address(account))
+    balances["ETH"] = eth_wei / 1e18
 
     for symbol, addr in TOKENS.items():
         try:

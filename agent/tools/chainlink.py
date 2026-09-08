@@ -33,9 +33,24 @@ PRICE_FEEDS: dict[str, str] = {
 }
 
 
+class RpcNotConfigured(RuntimeError):
+    """Raised when BASE_SEPOLIA_RPC is unset, so no on-chain read is possible."""
+
+
 def get_price_usd(symbol: str) -> float | None:
+    """Return the feed price, or None when `symbol` has no configured feed.
+
+    Raises RpcNotConfigured when there is no RPC endpoint at all: a missing
+    endpoint is a misconfiguration, not "this token has no price", and must not
+    be collapsed into None (which the caller drops silently).
+    """
+    if not RPC_URL:
+        raise RpcNotConfigured(
+            "BASE_SEPOLIA_RPC is not set - cannot read Chainlink price feeds. "
+            "Set it in agent/.env before running the agent."
+        )
     feed_address = PRICE_FEEDS.get(symbol.upper())
-    if not feed_address or not RPC_URL:
+    if not feed_address:
         return None
     w3 = Web3(Web3.HTTPProvider(RPC_URL))
     contract = w3.eth.contract(address=Web3.to_checksum_address(feed_address), abi=AGGREGATOR_ABI)

@@ -3,6 +3,9 @@
 Layout under test (account-abstraction v0.7 core/UserOperationLib.sol):
     paymaster[0:20] + paymasterVerificationGasLimit[20:36] + paymasterPostOpGasLimit[36:52] + paymasterData[52:]
 """
+import json
+import pathlib
+
 import pytest
 from eth_account import Account
 from eth_account.messages import encode_defunct
@@ -125,3 +128,58 @@ def test_signature_commits_to_paymaster_fields():
     # The same signature does not verify for the unsponsored op
     recovered_bad = Account.recover_message(encode_defunct(get_user_op_hash(_base_op())), signature=sig)
     assert recovered_bad != signer
+
+
+# --- Cross-language fixture -------------------------------------------------
+# contracts/test/fixtures/paymaster_and_data.json is the single source of truth
+# shared with contracts/test/PaymasterAndDataCrossLang.t.sol, which feeds the very
+# same `packed` bytes through the real account-abstraction
+# UserOperationLib.unpackPaymasterStaticFields. This test asserts the Python packer
+# still reproduces those bytes, so a change on either side of the language boundary
+# fails a test instead of only failing on-chain.
+
+FIXTURE_PATH = (
+    pathlib.Path(__file__).resolve().parents[2] / "contracts" / "test" / "fixtures" / "paymaster_and_data.json"
+)
+
+
+def _fixture_cases():
+    with FIXTURE_PATH.open() as fh:
+        return json.load(fh)["cases"]
+
+
+def test_cross_language_fixture_is_present_and_populated():
+    cases = _fixture_cases()
+    assert len(cases) == 3, "Solidity side hard-codes CASE_COUNT = 3; keep the two in step"
+
+
+@pytest.mark.parametrize("case", _fixture_cases(), ids=lambda c: c["name"])
+def test_python_packing_matches_cross_language_fixture(case):
+    op = {
+        **_base_op(),
+        "paymaster": case["paymaster"],
+        "paymasterVerificationGasLimit": case["paymasterVerificationGasLimit"],
+        "paymasterPostOpGasLimit": case["paymasterPostOpGasLimit"],
+        "paymasterData": case["paymasterData"],
+    }
+
+    packed = pack_paymaster_and_data(op)
+
+    assert packed.hex() == case["packed"][2:].lower(), (
+        f"{case['name']}: Python packing drifted from the fixture the Solidity test reads. "
+        f"Got 0x{packed.hex()}"
+    )
+
+    # And the fixture's own fields are internally consistent with the layout.
+    assert packed[:PAYMASTER_VALIDATION_GAS_OFFSET].hex() == case["paymaster"][2:].lower()
+    assert int.from_bytes(
+        packed[PAYMASTER_VALIDATION_GAS_OFFSET:PAYMASTER_POSTOP_GAS_OFFSET], "big"
+    ) == int(case["paymasterVerificationGasLimit"], 16)
+    assert int.from_bytes(
+        packed[PAYMASTER_POSTOP_GAS_OFFSET:PAYMASTER_DATA_OFFSET], "big"
+    ) == int(case["paymasterPostOpGasLimit"], 16)
+    assert packed[PAYMASTER_DATA_OFFSET:] == _hex_to_bytes_for_test(case["paymasterData"])
+
+
+def _hex_to_bytes_for_test(value: str) -> bytes:
+    return bytes.fromhex(value[2:]) if value and value != "0x" else b""
