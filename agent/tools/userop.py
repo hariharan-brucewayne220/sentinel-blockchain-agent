@@ -6,6 +6,68 @@ from eth_abi import encode
 ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032"
 CHAIN_ID = 84532  # Base Sepolia
 
+# Byte offsets inside `paymasterAndData`, mirroring account-abstraction v0.7
+# `core/UserOperationLib.sol` (PAYMASTER_VALIDATION_GAS_OFFSET = 20,
+# PAYMASTER_POSTOP_GAS_OFFSET = 36, PAYMASTER_DATA_OFFSET = 52), which is what
+# the EntryPoint uses in `unpackPaymasterStaticFields` to split the blob.
+PAYMASTER_VALIDATION_GAS_OFFSET = 20
+PAYMASTER_POSTOP_GAS_OFFSET = 36
+PAYMASTER_DATA_OFFSET = 52
+
+
+def _hex_to_int(value) -> int:
+    if value is None or value == "":
+        return 0
+    if isinstance(value, int):
+        return value
+    return int(value, 16)
+
+
+def _hex_to_bytes(value) -> bytes:
+    if not value:
+        return b""
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    return bytes.fromhex(value[2:] if value.startswith("0x") else value)
+
+
+def has_paymaster(op: dict) -> bool:
+    """True when the op carries a paymaster address (None / "" / "0x" mean unsponsored)."""
+    paymaster = op.get("paymaster")
+    return bool(paymaster) and paymaster != "0x"
+
+
+def pack_paymaster_and_data(op: dict) -> bytes:
+    """Pack the v0.7 `paymasterAndData` blob from the unpacked bundler-JSON fields.
+
+    Layout (fixed 52-byte prefix, then variable data):
+
+        paymaster (20 bytes)
+        + paymasterVerificationGasLimit (uint128, 16 bytes big-endian)
+        + paymasterPostOpGasLimit       (uint128, 16 bytes big-endian)
+        + paymasterData                 (arbitrary bytes, may be empty)
+
+    Returns b"" for an unsponsored op, which is what the EntryPoint expects
+    (`paymasterAndData.length == 0` means "no paymaster").
+    """
+    if not has_paymaster(op):
+        return b""
+
+    paymaster = _hex_to_bytes(op["paymaster"])
+    if len(paymaster) != 20:
+        raise ValueError(f"paymaster must be a 20-byte address, got {op['paymaster']!r}")
+
+    pm_verif = _hex_to_int(op.get("paymasterVerificationGasLimit"))
+    pm_postop = _hex_to_int(op.get("paymasterPostOpGasLimit"))
+    pm_data = _hex_to_bytes(op.get("paymasterData"))
+
+    return (
+        paymaster
+        + pm_verif.to_bytes(16, "big")
+        + pm_postop.to_bytes(16, "big")
+        + pm_data
+    )
+
 
 def _pack_user_op(op: dict) -> bytes:
     """Pack UserOperation fields for hashing (v0.7 spec)."""
@@ -35,19 +97,7 @@ def _pack_user_op(op: dict) -> bytes:
     gas_fees = (max_priority << 128) | max_fee
 
     # paymasterAndData: paymaster (20B) + pmVerifGasLimit (16B) + pmPostOpGasLimit (16B) + pmData
-    paymaster = op.get("paymaster")
-    if paymaster and paymaster not in (None, "0x"):
-        pm_verif = int((op.get("paymasterVerificationGasLimit") or "0x0"), 16)
-        pm_postop = int((op.get("paymasterPostOpGasLimit") or "0x0"), 16)
-        pm_data = bytes.fromhex((op.get("paymasterData") or "0x")[2:])
-        paymaster_and_data = (
-            bytes.fromhex(paymaster[2:])
-            + pm_verif.to_bytes(16, "big")
-            + pm_postop.to_bytes(16, "big")
-            + pm_data
-        )
-    else:
-        paymaster_and_data = b""
+    paymaster_and_data = pack_paymaster_and_data(op)
 
     packed = encode(
         ["address", "uint256", "bytes32", "bytes32", "uint256", "uint256", "uint256", "bytes32"],

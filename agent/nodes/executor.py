@@ -13,8 +13,17 @@ from agent.tools.userop import sign_user_op
 
 PRIVATE_KEY = os.getenv("PRIVATE_KEY", "")
 SENTINEL_ACCOUNT = os.getenv("SENTINEL_ACCOUNT_ADDRESS", "")
-SENTINEL_PAYMASTER = os.getenv("SENTINEL_PAYMASTER_ADDRESS", "")
 ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032"
+
+# Fallback paymaster gas limits, used only when the bundler's
+# eth_estimateUserOperationGas does not return paymasterVerificationGasLimit /
+# paymasterPostOpGasLimit. SentinelPaymaster._validatePaymasterUserOp is a single
+# SLOAD and returns an empty context, so the EntryPoint never invokes postOp;
+# these are deliberately generous and unused gas is refunded to the paymaster.
+DEFAULT_PAYMASTER_VERIFICATION_GAS = 100_000
+DEFAULT_PAYMASTER_POSTOP_GAS = 50_000
+
+_FALSEY = {"0", "false", "no", "off"}
 
 SENTINEL_ACCOUNT_ABI = [
     {
@@ -32,6 +41,38 @@ SENTINEL_ACCOUNT_ABI = [
         "type": "function",
     }
 ]
+
+
+def _paymaster_config() -> dict | None:
+    """Paymaster fields to attach to the UserOp, or None when sponsorship is off.
+
+    Reads the environment at call time:
+      SENTINEL_PAYMASTER_ADDRESS — deployed SentinelPaymaster; unset/empty = no sponsorship
+      USE_PAYMASTER              — optional kill switch; defaults to true when the address is set
+
+    SentinelPaymaster._validatePaymasterUserOp only checks
+    `registeredAccounts[userOp.sender]` (no signature, no time range), so
+    `paymasterData` is empty. Gas limits start at the defaults above and are
+    replaced by the bundler's estimate in executor_node when available.
+    """
+    address = os.getenv("SENTINEL_PAYMASTER_ADDRESS", "").strip()
+    if not address:
+        return None
+
+    use = os.getenv("USE_PAYMASTER", "").strip().lower()
+    if use in _FALSEY:
+        return None
+
+    if not (address.startswith("0x") and len(address) == 42):
+        raise ValueError(f"SENTINEL_PAYMASTER_ADDRESS must be a 0x-prefixed 20-byte address, got {address!r}")
+    int(address, 16)  # raises ValueError on non-hex
+
+    return {
+        "paymaster": address,
+        "paymasterVerificationGasLimit": hex(DEFAULT_PAYMASTER_VERIFICATION_GAS),
+        "paymasterPostOpGasLimit": hex(DEFAULT_PAYMASTER_POSTOP_GAS),
+        "paymasterData": "0x",
+    }
 
 
 def _build_reasoning_blob(state: AgentState, run_id: str) -> dict:
@@ -134,12 +175,27 @@ async def executor_node(state: AgentState) -> AgentState:
         "signature": "0x" + "00" * 65,  # placeholder, replaced below
     }
 
+    # Gas sponsorship: attach SentinelPaymaster (v0.7 unpacked JSON shape; the
+    # bundler/EntryPoint pack these four into paymasterAndData). The fields must be
+    # present *before* estimation so Pimlico simulates validatePaymasterUserOp and
+    # returns paymasterVerificationGasLimit / paymasterPostOpGasLimit.
+    paymaster_fields = _paymaster_config()
+    if paymaster_fields:
+        user_op.update(paymaster_fields)
+
     # Estimate gas from bundler with dummy signature, then sign with real values
     try:
         gas_est = await estimate_user_op_gas(user_op)
         user_op["callGasLimit"] = gas_est.get("callGasLimit", user_op["callGasLimit"])
         user_op["verificationGasLimit"] = gas_est.get("verificationGasLimit", user_op["verificationGasLimit"])
         user_op["preVerificationGas"] = gas_est.get("preVerificationGas", user_op["preVerificationGas"])
+        if paymaster_fields:
+            user_op["paymasterVerificationGasLimit"] = (
+                gas_est.get("paymasterVerificationGasLimit") or user_op["paymasterVerificationGasLimit"]
+            )
+            user_op["paymasterPostOpGasLimit"] = (
+                gas_est.get("paymasterPostOpGasLimit") or user_op["paymasterPostOpGasLimit"]
+            )
     except Exception:
         pass  # use defaults if estimation fails
 
@@ -149,7 +205,10 @@ async def executor_node(state: AgentState) -> AgentState:
     user_op_hash = await send_user_op(user_op)
 
     # Update blob with execution data and re-pin
-    blob["execution"] = {"userOpHash": user_op_hash}
+    blob["execution"] = {
+        "userOpHash": user_op_hash,
+        "paymaster": user_op["paymaster"],  # None when the account paid its own gas
+    }
     cid = await pin_json(blob)
 
     return state.model_copy(

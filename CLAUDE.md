@@ -50,7 +50,7 @@ The graph definition is in `agent/graph.py`. Nodes are in `agent/nodes/` (resear
 
 Current behaviour to keep in mind (see README "Implementation Status"):
 - `risk_check.py` reads PolicyGuard params on-chain and asks `gpt-4o-mini` to judge pass/fail; the deterministic gate is `PolicyGuard.checkPolicy()` reverting on-chain.
-- `executor.py` builds the v0.7 UserOp with all `paymaster*` fields `None`, so the deployed `SentinelPaymaster` is not used and the account pays gas.
+- `executor.py` attaches the deployed `SentinelPaymaster` when `SENTINEL_PAYMASTER_ADDRESS` is set (`USE_PAYMASTER=false` disables it): the four v0.7 `paymaster*` JSON fields are put on the op *before* `eth_estimateUserOperationGas`, the bundler's `paymasterVerificationGasLimit`/`paymasterPostOpGasLimit` replace the defaults, and `tools/userop.py` packs `paymaster ‖ verificationGasLimit(16B) ‖ postOpGasLimit(16B) ‖ paymasterData` into the signed hash. Unit-tested with mocks (`agent/tests/test_userop.py`, `agent/tests/test_executor.py`); **not yet exercised on Base Sepolia** — the live check is `eth_getUserOperationReceipt` on the sent hash showing `paymaster` = the SentinelPaymaster address. With the env var unset the account pays its own gas.
 - `tools/uniswap.py` encodes a Uniswap V3 `exactInputSingle` call but targets `MockDex.sol` (`0x992e…a936`), not a Uniswap router.
 
 ## Subgraph (The Graph)
@@ -95,7 +95,7 @@ Status: scaffold only. The committed `contracts/src/PolicyVerifier.sol` is a pla
 
 1. Agent Executor builds an ERC-4337 v0.7 `UserOperation` containing `SentinelAccount.executeSwap()` calldata.
 2. Before submission, Executor pins a reasoning JSON blob to IPFS via Pinata and injects the CID into the calldata.
-3. The UserOperation is submitted to Pimlico's bundler (`eth_sendUserOperation`). Gas is paid from the account's own EntryPoint deposit; `SentinelPaymaster` is deployed but not attached to the UserOp (paymaster fields are `None` in `executor.py`).
+3. The UserOperation is submitted to Pimlico's bundler (`eth_sendUserOperation`). With `SENTINEL_PAYMASTER_ADDRESS` set, `SentinelPaymaster` is attached and its EntryPoint deposit pays gas (it only requires `registeredAccounts[sender]`, which `Deploy.s.sol` sets; `paymasterData` is empty). Otherwise the account's own deposit pays. Sponsorship is unit-tested but not yet verified on Base Sepolia.
 4. On-chain: `SentinelAccount` calls `PolicyGuard.checkPolicy()` — reverts if any rule is violated — then calls the DEX (currently `MockDex.sol`) and emits `ActionLog.ActionExecuted` with the IPFS CID.
 5. The Graph subgraph indexes the event; the frontend reads it via Apollo.
 6. The frontend "Why?" button fetches the IPFS blob by CID and renders the full reasoning chain.
@@ -108,6 +108,8 @@ Status: scaffold only. The committed `contracts/src/PolicyVerifier.sol` is a pla
 | `BASE_SEPOLIA_RPC` | contracts, agent | RPC endpoint |
 | `PIMLICO_API_KEY` | agent executor | bundler access |
 | `PINATA_JWT` | agent executor | IPFS pinning |
+| `SENTINEL_PAYMASTER_ADDRESS` | agent executor | attach `SentinelPaymaster` to UserOps (gas sponsorship); unset = account pays |
+| `USE_PAYMASTER` | agent executor | optional kill switch; defaults to `true` when the address is set |
 | `OPENAI_API_KEY` | agent nodes | gpt-4o (Researcher/Strategist), gpt-4o-mini (RiskCheck; the Auditor makes no LLM call) |
 | `ONEINCH_API_KEY` | agent strategist | DEX quotes |
 | `NEXT_PUBLIC_SUBGRAPH_URL` | frontend | Apollo endpoint |
